@@ -1,5 +1,12 @@
 [
   {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Han’s Posts",
+    "section": "",
+    "text": "Bringing Memory to Claude Code: Lessons from OpenClaw\n\n\n\n\n\n\n\n\nFeb 13, 2026\n\n\n\n\n\nNo matching items"
+  },
+  {
     "objectID": "202602/bringing-memory-to-claude-code.html",
     "href": "202602/bringing-memory-to-claude-code.html",
     "title": "Bringing Memory to Claude Code: Lessons from OpenClaw",
@@ -33,12 +40,5 @@
     "title": "Bringing Memory to Claude Code: Lessons from OpenClaw",
     "section": "",
     "text": "Studying OpenClaw’s memory system was a rewarding exercise. The three-part design — recall, flush, and session save — is elegant in how each part has a clear responsibility and minimal complexity. The memory flush is smart (LLM-driven analysis), the session save is dumb (raw transcript dump with an LLM-generated slug), and the recall leverages semantic search to find needles in haystacks.\nThe mapping to Claude Code turned out to be straightforward. PreCompact and SessionEnd fire at exactly the right moments, claude -p gives hook scripts access to LLM capabilities without any extra setup, and qmd — the same tool OpenClaw uses internally for memory_search — provides the recall side via MCP.\nWhat I took away from this is that Claude Code’s hook system, combined with MCP, makes it surprisingly extensible. These hooks weren’t designed for memory, but they provide the right building blocks. If you’re interested in extending Claude Code beyond its defaults, the hook system is worth a look."
-  },
-  {
-    "objectID": "index.html",
-    "href": "index.html",
-    "title": "Han’s Posts",
-    "section": "",
-    "text": "Bringing Memory to Claude Code: Lessons from OpenClaw\n\n\n\n\n\n\n\n\nFeb 13, 2026\n\n\n\n\n\nNo matching items"
   }
 ]
