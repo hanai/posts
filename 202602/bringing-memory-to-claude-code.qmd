@@ -1,0 +1,309 @@
+---
+title: "Bringing Memory to Claude Code: Lessons from OpenClaw"
+date: 2026-02-13
+tags:
+  - claude-code
+  - hooks
+  - memory
+  - openclaw
+  - qmd
+---
+
+# Bringing Memory to Claude Code: Lessons from OpenClaw
+
+I've been spending a lot of time with Claude Code lately, and recently came across [OpenClaw](https://github.com/openclaw/openclaw) — an open-source AI agent platform. What caught my attention was its memory system: a clean, three-part design that lets the agent remember things across sessions and survive context compaction. I decided to dig into the source code, understand how it works, and see if I could bring the same idea to Claude Code using its hook system.
+
+This isn't a production-ready solution or a recommendation for everyone. It's a learning exercise — studying a well-designed system and experimenting with applying it somewhere else.
+
+## How OpenClaw Handles Memory
+
+OpenClaw's memory system has three distinct parts: **recall** (reading memories), **flush** (saving before compaction), and **session save** (capturing session context). Each serves a different purpose, and together they form a complete memory lifecycle.
+
+```{mermaid}
+flowchart TD
+    subgraph Write
+        A[Conversation in progress] -->|Context near limit| B[Memory Flush]
+        B -->|Agent extracts durable memories| D[(memory/YYYY-MM-DD.md)]
+        A -->|User runs /new| C[Session Memory]
+        C -->|Dump last N messages| D
+    end
+
+    subgraph Read
+        E[New session / question] -->|Before answering| F[memory_search]
+        F -->|Semantic search via qmd| D
+        F -->|Top results with path + lines| G[memory_get]
+        G -->|Pull specific snippets| H[Response with citations]
+    end
+```
+
+### Memory Recall
+
+The recall side is built into OpenClaw's system prompt. When `memory_search` and `memory_get` tools are available, the agent is instructed to search memory files before answering anything about prior work, decisions, dates, people, preferences, or todos:
+
+```
+Before answering anything about prior work, decisions, dates, people,
+preferences, or todos: run memory_search on MEMORY.md + memory/*.md;
+then use memory_get to pull only the needed lines.
+If low confidence after search, say you checked.
+```
+
+`memory_search` performs semantic search across `MEMORY.md` and `memory/*.md` files. Under the hood, it uses [qmd](https://github.com/tobi/qmd) — an on-device search engine that combines BM25 full-text search, vector semantic search, and LLM re-ranking. All processing happens locally with GGUF models, no cloud dependency.
+
+`memory_get` is a simple snippet reader. After `memory_search` returns matching results with file paths and line numbers, `memory_get` pulls the specific lines needed — keeping the context small and precise.
+
+### Memory Flush (Pre-compaction)
+
+When a conversation grows long enough to approach the context window limit, OpenClaw triggers a memory flush before compaction happens. The implementation in `memory-flush.ts` checks whether `totalTokens >= contextWindow - reserveTokens - softThreshold` (with a default soft threshold of 4000 tokens). When that condition is met, the agent receives a prompt:
+
+```
+Pre-compaction memory flush.
+Store durable memories now (use memory/YYYY-MM-DD.md; create memory/ if needed).
+If nothing to store, reply with NO_REPLY.
+```
+
+This is the intelligent part — the agent analyzes the conversation and decides what's worth keeping. It's not a blind dump; the agent extracts decisions, preferences, important context, and writes structured notes to date-stamped markdown files.
+
+### Session Memory
+
+The session memory hook fires when the user issues the `/new` command to start a fresh session. Unlike the memory flush, this is deliberately simple:
+
+1. Extract the last N messages from the previous session (default: 15)
+2. Use an LLM to generate a short filename slug (e.g., "vendor-pitch", "api-design")
+3. Save the transcript to `memory/YYYY-MM-DD-slug.md`
+
+No analysis, no summarization — just a raw transcript dump. The idea is that the raw conversation itself is valuable context for future sessions, and the semantic search on the recall side will find the relevant parts when needed.
+
+## Mapping to Claude Code
+
+With a clear picture of OpenClaw's design, the next question is: can we replicate this in Claude Code? The answer is yes, using Claude Code's [hook system](https://docs.claude.com/en/hooks).
+
+Claude Code hooks are shell commands that execute automatically at specific points in a session's lifecycle. The two events we need are `PreCompact` (fires before context compaction) and `SessionEnd` (fires when a session terminates). Both accept command hooks — shell scripts that receive JSON context via stdin.
+
+### Architecture Design
+
+Here's how OpenClaw's three-part memory maps to Claude Code:
+
+| OpenClaw | Claude Code | Mechanism |
+|----------|-------------|-----------|
+| Memory Flush (pre-compaction) | **PreCompact** hook | Shell script, uses `claude -p` for extraction |
+| Session Memory (`/new` command) | **SessionEnd** hook | Shell script, uses `claude -p` for slug generation |
+| Memory Recall (`memory_search`) | **qmd MCP server** | MCP integration |
+
+**Storage**: Memory files are stored at `~/.cc-memory/[project-path]/memory/`, where `[project-path]` is the project's absolute path converted to a valid folder name (e.g., `/Users/me/my-project` becomes `Users__me__my-project`). This keeps memories separated per project while stored in a global location.
+
+The choice of `PreCompact` for memory flush is a direct parallel — both fire right before context compaction. `SessionEnd` replaces OpenClaw's `/new` hook since Claude Code fires it when a session terminates (user exit, `/clear`, logout). For recall, qmd already provides an MCP server, so Claude Code can use it directly as an MCP tool.
+
+Both scripts use `claude -p` (Claude Code's pipe mode) for LLM capabilities. This means no API keys to configure, no SDK dependencies — just the `claude` CLI that's already installed.
+
+## Implementation
+
+### Hook Configuration
+
+Both hooks are configured in `~/.claude/settings.json` to apply globally across all projects:
+
+```json
+{
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.cc-memory/scripts/memory-flush.sh\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.cc-memory/scripts/save-session.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### PreCompact: Memory Flush
+
+The memory flush script reads the conversation transcript, pipes it to `claude -p` for intelligent extraction, and writes the result to a memory file:
+
+```bash
+#!/bin/bash
+# memory-flush.sh - PreCompact hook
+
+set -euo pipefail
+
+# Guard against recursive invocation (claude -p triggers hooks too)
+if [ "${CC_MEMORY_HOOK:-}" = "1" ]; then
+  exit 0
+fi
+
+INPUT=$(cat)
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
+CWD=$(echo "$INPUT" | jq -r '.cwd')
+
+# Convert project path to folder name (strip leading /, replace / with __)
+PROJECT_FOLDER=$(echo "$CWD" | sed 's|^/||' | sed 's|/|__|g')
+MEMORY_DIR="$HOME/.cc-memory/$PROJECT_FOLDER/memory"
+mkdir -p "$MEMORY_DIR"
+
+DATE=$(date +%Y-%m-%d)
+FILENAME="$MEMORY_DIR/$DATE.md"
+
+if [ ! -f "$TRANSCRIPT_PATH" ]; then
+  exit 0
+fi
+
+# Read the last ~50KB of the transcript to stay within token limits
+TRANSCRIPT_CONTENT=$(tail -c 50000 "$TRANSCRIPT_PATH")
+
+MEMORY_CONTENT=$(echo "$TRANSCRIPT_CONTENT" | CC_MEMORY_HOOK=1 claude -p \
+  "You are a memory extraction agent. The following is a conversation
+transcript (JSONL format) from a coding session. Extract durable memories
+that should be preserved:
+
+- Decisions made
+- User preferences discovered
+- Important technical context
+- Todos and action items
+- Key outcomes and conclusions
+
+Format the output as markdown with clear sections and bullet points.
+Be concise but capture everything important.
+If there is nothing worth saving, respond with exactly NO_REPLY.")
+
+if [ -z "$MEMORY_CONTENT" ] || [ "$MEMORY_CONTENT" = "NO_REPLY" ]; then
+  exit 0
+fi
+
+# Append separator if file already exists
+if [ -f "$FILENAME" ]; then
+  echo "" >> "$FILENAME"
+  echo "---" >> "$FILENAME"
+  echo "" >> "$FILENAME"
+fi
+
+echo "## Memory Flush - $(date -u '+%H:%M UTC')" >> "$FILENAME"
+echo "" >> "$FILENAME"
+echo "$MEMORY_CONTENT" >> "$FILENAME"
+
+exit 0
+```
+
+A few things to note:
+- The `CC_MEMORY_HOOK=1` prefix sets an environment variable for the `claude -p` subprocess. Both scripts check this variable at entry and exit early if set — this prevents recursive invocation, since `claude -p` itself triggers `SessionEnd` hooks when it finishes.
+- It reads the last 50KB of the transcript rather than the whole file, to keep the input manageable.
+- Multiple compactions in the same day append to the same file with `---` separators.
+
+### SessionEnd: Session Save
+
+The session save script dumps the last 15 transcript entries to a file, using `claude -p` to generate a descriptive filename slug — matching OpenClaw's approach:
+
+```bash
+#!/bin/bash
+# save-session.sh - SessionEnd hook
+
+set -euo pipefail
+
+# Guard against recursive invocation (claude -p triggers hooks too)
+if [ "${CC_MEMORY_HOOK:-}" = "1" ]; then
+  exit 0
+fi
+
+INPUT=$(cat)
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path')
+CWD=$(echo "$INPUT" | jq -r '.cwd')
+
+# Convert project path to folder name (strip leading /, replace / with __)
+PROJECT_FOLDER=$(echo "$CWD" | sed 's|^/||' | sed 's|/|__|g')
+MEMORY_DIR="$HOME/.cc-memory/$PROJECT_FOLDER/memory"
+mkdir -p "$MEMORY_DIR"
+
+DATE=$(date +%Y-%m-%d)
+
+if [ ! -f "$TRANSCRIPT_PATH" ]; then
+  exit 0
+fi
+
+# Extract last 15 entries from transcript JSONL
+SESSION_CONTENT=$(tail -n 15 "$TRANSCRIPT_PATH")
+
+# Generate slug via claude -p (first 2000 chars to keep it fast)
+SLUG=$(echo "$SESSION_CONTENT" | head -c 2000 | CC_MEMORY_HOOK=1 claude -p \
+  "Based on this conversation transcript, generate a short 1-2 word
+filename slug (lowercase, hyphen-separated, no file extension).
+Reply with ONLY the slug, nothing else.
+Examples: vendor-pitch, api-design, bug-fix")
+
+# Sanitize slug: lowercase, only alphanumeric and hyphens, max 30 chars
+SLUG=$(echo "$SLUG" | tr '[:upper:]' '[:lower:]' \
+  | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' \
+  | sed 's/^-//' | sed 's/-$//' | head -c 30)
+
+# Fallback to timestamp if slug generation fails
+if [ -z "$SLUG" ]; then
+  SLUG=$(date +%H%M)
+fi
+
+FILENAME="$MEMORY_DIR/$DATE-$SLUG.md"
+
+echo "# Session: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" > "$FILENAME"
+echo "- **Project**: $CWD" >> "$FILENAME"
+echo "" >> "$FILENAME"
+echo "$SESSION_CONTENT" >> "$FILENAME"
+
+exit 0
+```
+
+The only LLM usage here is for the filename slug — the transcript content itself is saved as-is. The semantic search on the recall side handles finding relevant content later.
+
+### qmd MCP Integration
+
+For the recall side, qmd provides an MCP server out of the box. The setup involves:
+
+1. **Create a collection** for each project's memory directory:
+
+```bash
+qmd collection create my-project ~/.cc-memory/my_project/memory \
+  --context "Development memories and session history for my-project"
+```
+
+2. **Configure Claude Code** to use qmd as an MCP server. In `.claude/settings.json` or `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "qmd": {
+      "command": "qmd",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+3. **Guide recall behavior** via CLAUDE.md. Add instructions similar to OpenClaw's system prompt:
+
+```markdown
+## Memory
+
+Before answering questions about prior work, decisions, or preferences,
+search the memory collection using the qmd MCP tools. Use the search
+results to inform your response.
+```
+
+Once configured, Claude Code can use qmd's MCP tools — semantic search, deep search with reranking, and document retrieval — to query the memory files. This completes the memory lifecycle: PreCompact and SessionEnd write memories, qmd reads them back.
+
+## Conclusion
+
+Studying OpenClaw's memory system was a rewarding exercise. The three-part design — recall, flush, and session save — is elegant in how each part has a clear responsibility and minimal complexity. The memory flush is smart (LLM-driven analysis), the session save is dumb (raw transcript dump with an LLM-generated slug), and the recall leverages semantic search to find needles in haystacks.
+
+The mapping to Claude Code turned out to be straightforward. `PreCompact` and `SessionEnd` fire at exactly the right moments, `claude -p` gives hook scripts access to LLM capabilities without any extra setup, and qmd — the same tool OpenClaw uses internally for `memory_search` — provides the recall side via MCP.
+
+What I took away from this is that Claude Code's hook system, combined with MCP, makes it surprisingly extensible. These hooks weren't designed for memory, but they provide the right building blocks. If you're interested in extending Claude Code beyond its defaults, the hook system is worth a look.

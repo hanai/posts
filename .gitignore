@@ -1,0 +1,5 @@
+/.quarto/
+/_site/
+.claude/
+
+**/*.quarto_ipynb

@@ -1,0 +1,15 @@
+project:
+  type: website
+
+website:
+  title: "Han's Posts"
+  site-url: https://hanai.github.io/posts
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+
+format:
+  html:
+    theme: cosmo
+    toc: true
