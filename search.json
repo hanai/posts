@@ -4,7 +4,49 @@
     "href": "index.html",
     "title": "Han’s Posts",
     "section": "",
-    "text": "Bringing Memory to Claude Code: Lessons from OpenClaw\n\n\n\n\n\n\n\n\nFeb 13, 2026\n\n\n\n\n\nNo matching items"
+    "text": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等\n\n\n\n\n\n\n\n\nFeb 26, 2026\n\n\n\n\n\n\n\n\n\n\n\n\nBringing Memory to Claude Code: Lessons from OpenClaw\n\n\n\n\n\n\n\n\nFeb 13, 2026\n\n\n\n\n\nNo matching items"
+  },
+  {
+    "objectID": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html",
+    "href": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html",
+    "title": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等",
+    "section": "",
+    "text": "OpenClaw 最近很火，很多人在讨论要不要专门买台 Mac Mini 来跑它。先别急， 有个更省事的方案——用 Lume 在你现有的 Mac 上跑一台 macOS 虚拟机，体验相当不错。\n在聊 Lume 之前，说说为什么其他选项不够好："
+  },
+  {
+    "objectID": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#什么是-lume",
+    "href": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#什么是-lume",
+    "title": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等",
+    "section": "什么是 Lume",
+    "text": "什么是 Lume\nLume 是一个基于 Apple 官方 Virtualization.framework 的 macOS/Linux 虚拟机管理工具，专为 Apple Silicon（M1 及以上）设计。\n几个关键特点：\n\n接近原生的性能：直接使用硬件虚拟化，不走 QEMU 等软件模拟层\nCLI 优先，没有 GUI：通过命令行或 REST API 管理，headless 场景是第一公民\n轻量：不依赖额外的 Hypervisor，本身资源占用小\n无人值守安装：--unattended 参数全自动完成 macOS 安装，不需要手动点选"
+  },
+  {
+    "objectID": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#安装-lume",
+    "href": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#安装-lume",
+    "title": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等",
+    "section": "安装 Lume",
+    "text": "安装 Lume\nbrew install lume\n硬盘空间有限的话，可以把虚拟机存到外部硬盘：\n# 添加外部存储位置\nlume config storage add external /Volumes/HS-C2000/lume\n# 设为新虚拟机的默认存储\nlume config storage default external"
+  },
+  {
+    "objectID": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#创建虚拟机",
+    "href": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#创建虚拟机",
+    "title": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等",
+    "section": "创建虚拟机",
+    "text": "创建虚拟机\n完整流程参考 Lume 官方 Quickstart 文档， 包括 ipsw 镜像的下载方式。准备好镜像后，一条命令完成安装：\nlume create vm-oc \\\n  --os macos \\\n  --ipsw /Volumes/HS-C2000/Downloads/UniversalMac_26.2_25C56_Restore.ipsw \\\n  --storage external \\\n  --unattended tahoe\n--unattended 会全自动完成系统安装，静等结束就好。"
+  },
+  {
+    "objectID": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#启动并连接",
+    "href": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#启动并连接",
+    "title": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等",
+    "section": "启动并连接",
+    "text": "启动并连接\n安装完成后，headless 模式后台启动：\nlume run vm-oc --no-display &gt; /dev/null 2&gt;&1 &\n命令执行后，系统会自动弹出「屏幕共享」连接到虚拟机，就可以像操作一台普通 Mac 一样，在里面安装 OpenClaw 了。OpenClaw 的安装直接参考 官方文档，在 VM 里没有额外的坑。"
+  },
+  {
+    "objectID": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#跑起来之后",
+    "href": "202602/try-openclaw-with-lume-vm-before-buying-mac-mini.html#跑起来之后",
+    "title": "想买一个 Mac Mini 来养小龙虾(OpenClaw)？你可以先等等",
+    "section": "跑起来之后",
+    "text": "跑起来之后\n性能比我预期的好，OpenClaw 日常使用响应不慢。和 UTM 比，最大的差别是省心—— 不需要打开一个 GUI 程序来管虚拟机，命令行启停，干净。\n说实话，OpenClaw 还在快速迭代，现在就花几千块买台专用机器，多少有点赌。 但这个方案可以让你现在就跑起来，真的用顺手了、确认值得，再考虑买硬件不迟。"
   },
   {
     "objectID": "202602/bringing-memory-to-claude-code.html",
